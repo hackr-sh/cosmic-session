@@ -9,9 +9,7 @@ mod service;
 mod systemd;
 
 use std::{
-	borrow::Cow,
-	os::fd::{AsRawFd, OwnedFd},
-	sync::Arc,
+	borrow::Cow, env, os::fd::{AsRawFd, OwnedFd}, sync::Arc
 };
 
 use async_signals::Signals;
@@ -116,6 +114,9 @@ async fn start(
 ) -> Result<Status> {
 	info!("Starting cosmic-session");
 
+	let mut args = env::args().skip(1);
+	let (executable, args) = (args.next().unwrap_or_else(|| String::from("cosmic-comp")), args.collect::<Vec<_>>());
+
 	let process_manager = ProcessManager::new().await;
 	_ = process_manager.set_max_restarts(usize::MAX).await;
 	_ = process_manager
@@ -128,6 +129,8 @@ async fn start(
 	let (env_tx, env_rx) = oneshot::channel();
 	let compositor_handle = comp::run_compositor(
 		&process_manager,
+		executable.clone(),
+		args,
 		token.child_token(),
 		socket_rx,
 		env_tx,
@@ -322,26 +325,28 @@ async fn start(
 	)
 	.await;
 
-	let span = info_span!(parent: None, "xdg-desktop-portal-cosmic");
-	let mut sockets = Vec::with_capacity(1);
-	let extra_env = Vec::with_capacity(1);
-	let portal_extras =
-		if let Ok((mut env, fd)) = create_privileged_socket(&mut sockets, &extra_env) {
-			let mut env = env.remove(0);
-			env.0 = "PORTAL_WAYLAND_SOCKET".to_string();
-			vec![(fd, env, sockets.remove(0))]
-		} else {
-			Vec::new()
-		};
-	start_component(
-		XDP_COSMIC.unwrap_or("/usr/libexec/xdg-desktop-portal-cosmic"),
-		span,
-		&process_manager,
-		&env_vars,
-		&socket_tx,
-		portal_extras,
-	)
-	.await;
+	if env::var("XDG_CURRENT_DESKOP").ok().is_some_and(|desktop| desktop == "COSMIC") {
+		let span = info_span!(parent: None, "xdg-desktop-portal-cosmic");
+		let mut sockets = Vec::with_capacity(1);
+		let extra_env = Vec::with_capacity(1);
+		let portal_extras =
+			if let Ok((mut env, fd)) = create_privileged_socket(&mut sockets, &extra_env) {
+				let mut env = env.remove(0);
+				env.0 = "PORTAL_WAYLAND_SOCKET".to_string();
+				vec![(fd, env, sockets.remove(0))]
+			} else {
+				Vec::new()
+			};
+		start_component(
+			XDP_COSMIC.unwrap_or("/usr/libexec/xdg-desktop-portal-cosmic"),
+			span,
+			&process_manager,
+			&env_vars,
+			&socket_tx,
+			portal_extras,
+		)
+		.await;
+	}
 
 	let mut signals = Signals::new(vec![libc::SIGTERM, libc::SIGINT]).unwrap();
 	let mut status = Status::Exited;
