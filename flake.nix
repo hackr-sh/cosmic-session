@@ -7,7 +7,6 @@
     nix-filter.url = "github:numtide/nix-filter";
     crane = {
       url = "github:ipetkov/crane";
-      inputs.nixpkgs.follows = "nixpkgs";
     };
     fenix = {
       url = "github:nix-community/fenix";
@@ -19,7 +18,7 @@
     flake-utils.lib.eachSystem [ "x86_64-linux" "aarch64-linux" ] (system:
       let
         pkgs = nixpkgs.legacyPackages.${system};
-        craneLib = crane.lib.${system}.overrideToolchain fenix.packages.${system}.stable.toolchain;
+        craneLib = (crane.mkLib pkgs).overrideToolchain fenix.packages.${system}.stable.toolchain;
 
         pkgDef = {
           nativeBuildInputs = with pkgs; [ just pkg-config autoPatchelfHook ];
@@ -42,25 +41,26 @@
         cosmic-session = craneLib.buildPackage (pkgDef // {
           inherit cargoArtifacts;
         });
-      in {
+      in
+      {
         checks = {
           inherit cosmic-session;
         };
 
         packages.default = cosmic-session.overrideAttrs (oldAttrs: rec {
-        buildPhase = ''
-            just prefix=$out xdp_cosmic=/run/current-system/sw/bin/xdg-desktop-portal-cosmic build 
+          buildPhase = ''
+            just prefix=$out xdp_cosmic=/run/current-system/sw/bin/xdg-desktop-portal-cosmic build
           '';
-        installPhase = ''
+          installPhase = ''
             runHook preInstallPhase
             just prefix=$out install
           '';
-        preInstallPhase = ''
+          preInstallPhase = ''
             substituteInPlace data/start-cosmic --replace '#!/bin/bash' "#!${pkgs.bash}/bin/bash"
             substituteInPlace data/start-cosmic --replace '/usr/bin/cosmic-session' "${placeholder "out"}/bin/cosmic-session"
             substituteInPlace data/start-cosmic --replace '/usr/bin/dbus-run-session' "${pkgs.dbus}/bin/dbus-run-session"
             substituteInPlace data/cosmic.desktop --replace '/usr/bin/start-cosmic' "${placeholder "out"}/bin/start-cosmic"
-        '';  
+          '';
           passthru.providedSessions = [ "cosmic" ];
         });
 
